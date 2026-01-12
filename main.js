@@ -2,7 +2,7 @@ import JSZip from 'https://esm.sh/jszip@3.10.1';
 import { getAllUserProjectsGenerator } from './api_user.js';
 import { getProjectHtml } from './api_html.js';
 import { getAssets, processAssets } from './api_assets.js';
-import { getAllProjectRevisions, getProjectById, getProjectBySlug } from './api_project.js';
+import { getAllProjectRevisions, getProjectById, getProjectBySlug, getRevisionDetails } from './api_project.js';
 
 // --- State ---
 let isRunning = false;
@@ -181,43 +181,82 @@ async function processProject(project, username, userFolder) {
         const folderName = project.slug || project.id || `project_${project.id}`;
         const projectFolder = userFolder.folder(folderName);
 
-        // 2. Fetch HTML
+        // 2. Fetch Source Files (HTML, CSS, JS, etc.)
         if (stopRequested) return;
-        updateStatus(uiId, 'loading', 'Downloading HTML...');
-        console.log(`[Main] Fetching HTML for ${project.id}...`);
+        updateStatus(uiId, 'loading', 'Downloading source files...');
         
-        const html = await getProjectHtml(project.id, versionId);
-        if (html) {
-            projectFolder.file('index.html', html);
-            console.log(`[Main] HTML added to zip for ${project.id}`);
-        } else {
-            console.warn(`[Main] HTML content missing for ${project.id}`);
-            projectFolder.file('index.html', `<!-- Failed to fetch HTML for ${folderName} -->`);
+        let sourceFiles = {};
+        try {
+            const revData = await getRevisionDetails(project.id, versionId);
+            const rev = revData.revision || revData; // Handle nested response
+
+            // A. Check 'files' object (Standard for multi-file projects)
+            if (rev.files) {
+                for (const [filename, fileData] of Object.entries(rev.files)) {
+                    // fileData might be a string or an object {content: "..."}
+                    const content = typeof fileData === 'string' ? fileData : fileData.content;
+                    if (content) sourceFiles[filename] = content;
+                }
+            }
+
+            // B. Check Legacy/Single-file fields
+            if (!sourceFiles['index.html']) {
+                if (rev.html) sourceFiles['index.html'] = rev.html;
+                else if (rev.content && typeof rev.content === 'string') sourceFiles['index.html'] = rev.content;
+            }
+            if (!sourceFiles['style.css'] && rev.css) sourceFiles['style.css'] = rev.css;
+            if (!sourceFiles['script.js'] && rev.js) sourceFiles['script.js'] = rev.js;
+
+        } catch (e) {
+            console.warn(`[Main] Error fetching revision details:`, e);
         }
 
-        // 3. Fetch Assets
+        // C. Last Resort for HTML
+        if (!sourceFiles['index.html']) {
+             console.log(`[Main] HTML not found in metadata, trying direct endpoint...`);
+             const html = await getProjectHtml(project.id, versionId);
+             if (html) sourceFiles['index.html'] = html;
+        }
+
+        // Write Source Files to Zip
+        const sourceKeys = Object.keys(sourceFiles);
+        if (sourceKeys.length > 0) {
+            for (const [name, content] of Object.entries(sourceFiles)) {
+                projectFolder.file(name, content);
+            }
+            console.log(`[Main] Added ${sourceKeys.length} source files to zip.`);
+        } else {
+            projectFolder.file('index.html', `<!-- Failed to fetch source files for ${project.id} -->`);
+        }
+
+        // 3. Fetch Uploaded Assets (Images, Sounds, etc.)
         if (stopRequested) return;
         updateStatus(uiId, 'loading', 'Scanning assets...');
-        console.log(`[Main] fetching asset list for ${project.id}...`);
         
-        const assetList = await getAssets(project.id, versionId);
-        console.log(`[Main] Found ${assetList.length} assets for ${project.id}`);
-        
-        if (assetList.length > 0) {
-            if (stopRequested) return;
-            updateStatus(uiId, 'loading', `Downloading ${assetList.length} assets...`);
+        try {
+            const assetList = await getAssets(project.id, versionId);
+            console.log(`[Main] Found ${assetList.length} assets for ${project.id}`);
             
-            const assetFiles = await processAssets(assetList, project.id, versionId);
-            const assetKeys = Object.keys(assetFiles);
-            console.log(`[Main] Processed ${assetKeys.length} valid asset files for ${project.id}`);
-            
-            if (assetKeys.length > 0) {
-                const assetsFolder = projectFolder.folder('assets');
-                for (const [path, content] of Object.entries(assetFiles)) {
-                    assetsFolder.file(path, content);
+            if (assetList.length > 0) {
+                if (stopRequested) return;
+                updateStatus(uiId, 'loading', `Downloading ${assetList.length} assets...`);
+                
+                const assetFiles = await processAssets(assetList, project.id, versionId);
+                const assetKeys = Object.keys(assetFiles);
+                
+                if (assetKeys.length > 0) {
+                    // Write directly to project folder (preserving paths), NOT into 'assets/' subfolder
+                    // unless the path itself contains it. This fixes relative links.
+                    for (const [path, content] of Object.entries(assetFiles)) {
+                        // Avoid overwriting source files (e.g. index.html) unless strictly necessary? 
+                        // Usually assets don't collide with source files.
+                        projectFolder.file(path, content);
+                    }
+                    console.log(`[Main] Added ${assetKeys.length} assets to zip.`);
                 }
-                console.log(`[Main] Added assets to zip folder for ${project.id}`);
             }
+        } catch (e) {
+            console.warn(`[Main] Asset processing failed:`, e);
         }
 
         processedCount++;

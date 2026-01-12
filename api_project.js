@@ -13,6 +13,10 @@ export function getProjectRevisions(projectId, params = {}) {
     return makeRequest(`/projects/${projectId}/revisions?${query}`);
 }
 
+export function getRevisionDetails(projectId, revisionId) {
+    return makeRequest(`/projects/${projectId}/revisions/${revisionId}`);
+}
+
 export async function getAllProjectRevisions(projectId) {
     console.log(`[API-Project] getAllProjectRevisions for ${projectId}`);
     let allRevisions = [];
