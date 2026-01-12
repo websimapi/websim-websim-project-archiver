@@ -148,7 +148,7 @@ export async function processAssets(assetList, projectId, version) {
             if (filename) {
                 const ts = Date.now();
                 url = `https://${projectId}.c.websim.com/${encodeURIComponent(filename)}?v=${version}&t=${ts}`;
-                // console.log(`[WebSimAPI] ${path} -> Synthesized CDN URL: ${url}`);
+                console.log(`[WebSimAPI] ${path} -> Synthesized CDN URL: ${url}`);
             }
         }
         

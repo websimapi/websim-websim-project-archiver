@@ -35,9 +35,21 @@ export async function* getAllUserProjectsGenerator(username) {
 
             console.log(`[API-User] Page ${pageCount} returned ${projects.length} projects.`);
 
+            if (projects.length > 0) {
+                // Debug log structure
+                console.log('[API-User] First item keys:', Object.keys(projects[0]));
+                if (projects[0].project) console.log('[API-User] First item has .project property');
+                
+                // Unwrapping logic if the API returns wrapped objects
+                if (!projects[0].id && projects[0].project) {
+                    console.log('[API-User] Unwrap: Mapping data.project to data...');
+                    projects = projects.map(p => p.project);
+                }
+            }
+
             // Yield found projects individually
             for (const p of projects) {
-                yield p;
+                if (p) yield p;
             }
 
             if (meta && meta.has_next_page && meta.end_cursor) {

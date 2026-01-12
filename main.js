@@ -83,15 +83,19 @@ async function processProject(project, userFolder) {
         
         if (!versionId) {
              console.log(`[Main] No latest_revision in project object for ${project.id}, fetching history...`);
-             const revisions = await getAllProjectRevisions(project.id);
-             if (revisions.length > 0) {
-                 versionId = revisions[0].id;
-                 console.log(`[Main] Found latest revision from history: ${versionId}`);
+             try {
+                const revisions = await getAllProjectRevisions(project.id);
+                if (revisions && revisions.length > 0) {
+                    versionId = revisions[0].id;
+                    console.log(`[Main] Found latest revision from history: ${versionId}`);
+                }
+             } catch (e) {
+                 console.error(`[Main] Failed to fetch revisions: ${e.message}`);
              }
         }
 
         if (!versionId) {
-            throw new Error('No revisions found for project');
+            throw new Error('No revisions found for project (and history fetch failed or was empty)');
         }
 
         // Safety for folder name
@@ -193,8 +197,18 @@ async function startBackup() {
             const el = createProjectElement(project);
             projectListEl.appendChild(el);
 
+            if (!project.id) {
+                console.error('[Main] Skipping project with missing ID:', project);
+                updateStatus('unknown', 'error', 'Missing ID');
+                continue;
+            }
+
             // Process immediately (Sequential for safety/simplicity)
             await processProject(project, userFolder);
+            
+            // Wait 3 seconds to avoid rate limits
+            console.log('[Main] Waiting 3 seconds before next project...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
         }
 
     } catch (e) {

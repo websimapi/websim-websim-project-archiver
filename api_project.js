@@ -14,6 +14,7 @@ export function getProjectRevisions(projectId, params = {}) {
 }
 
 export async function getAllProjectRevisions(projectId) {
+    console.log(`[API-Project] getAllProjectRevisions for ${projectId}`);
     let allRevisions = [];
     let hasNextPage = true;
     let afterCursor = null;
@@ -39,7 +40,7 @@ export async function getAllProjectRevisions(projectId) {
             
             if (!afterCursor) hasNextPage = false;
         } catch (e) {
-            console.warn("Error fetching revision page", e);
+            console.error(`[API-Project] Error fetching revision page ${pageCount}:`, e);
             hasNextPage = false;
         }
         pageCount++;
