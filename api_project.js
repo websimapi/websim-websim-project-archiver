@@ -48,7 +48,14 @@ export async function getAllProjectRevisions(projectId) {
 
             if (pageData.length > 0) {
                 console.log(`[API-Project] Found ${pageData.length} revisions. First item keys:`, Object.keys(pageData[0] || {}));
-                allRevisions = allRevisions.concat(pageData);
+                // Unwrap revisions if they are nested in project_revision or revision
+                const unwrapped = pageData.map(item => {
+                    if (item.project_revision) return item.project_revision;
+                    if (item.revision) return item.revision;
+                    return item;
+                }).filter(r => r && r.id); // Ensure we have valid objects with IDs
+                
+                allRevisions = allRevisions.concat(unwrapped);
             } else {
                 console.warn(`[API-Project] Page ${pageCount} returned no revisions.`);
             }

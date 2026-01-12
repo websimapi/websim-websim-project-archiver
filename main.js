@@ -100,21 +100,24 @@ async function processProject(project, username, userFolder) {
                     const fullProj = await getProjectBySlug(username, project.slug);
                     if (fullProj) {
                         console.log(`[Main] Slug lookup returned keys:`, Object.keys(fullProj));
-                        if (fullProj.latest_revision) {
-                            versionId = fullProj.latest_revision.id;
-                            console.log(`[Main] Found version via slug: ${versionId}`);
-                        } else if (fullProj.revision) {
-                            versionId = fullProj.revision.id;
-                             console.log(`[Main] Found version via slug (.revision): ${versionId}`);
-                        }
                         
-                        // Update to proper UUID
-                        if (fullProj.id && fullProj.id !== project.id) {
-                            console.log(`[Main] Updating project ID: ${project.id} -> ${fullProj.id}`);
-                            project.id = fullProj.id;
+                        // Handle wrapped responses (e.g. { project_revision: {...}, project: {...} })
+                        if (fullProj.project_revision && fullProj.project_revision.id) {
+                             versionId = fullProj.project_revision.id;
+                             console.log(`[Main] Found version via slug (project_revision): ${versionId}`);
+                        } else if (fullProj.project && fullProj.project.latest_revision?.id) {
+                             versionId = fullProj.project.latest_revision.id;
+                             console.log(`[Main] Found version via slug (project.latest_revision): ${versionId}`);
+                        } else if (fullProj.latest_revision?.id) {
+                            versionId = fullProj.latest_revision.id;
                         }
-                    } else {
-                        console.warn(`[Main] Slug lookup returned null/undefined`);
+
+                        // Update to proper UUID if found in wrapped object
+                        const foundProjId = fullProj.project?.id || fullProj.id;
+                        if (foundProjId && foundProjId !== project.id) {
+                            console.log(`[Main] Updating project ID: ${project.id} -> ${foundProjId}`);
+                            project.id = foundProjId;
+                        }
                     }
                 } catch(e) {
                     console.warn(`[Main] Slug fetch failed: ${e.message}`);
@@ -126,11 +129,19 @@ async function processProject(project, username, userFolder) {
                 try {
                     console.log(`[Main] B: Fetching metadata via ID: ${project.id}`);
                     const fullProj = await getProjectById(project.id);
-                    console.log(`[Main] ID lookup keys:`, Object.keys(fullProj || {}));
-                    
-                    if (fullProj && fullProj.latest_revision) {
-                        versionId = fullProj.latest_revision.id;
-                        console.log(`[Main] Found version via ID: ${versionId}`);
+                    if (fullProj) {
+                        console.log(`[Main] ID lookup keys:`, Object.keys(fullProj));
+                        
+                        // Handle wrapped responses
+                        if (fullProj.project_revision && fullProj.project_revision.id) {
+                             versionId = fullProj.project_revision.id;
+                             console.log(`[Main] Found version via ID (project_revision): ${versionId}`);
+                        } else if (fullProj.project && fullProj.project.latest_revision?.id) {
+                             versionId = fullProj.project.latest_revision.id;
+                             console.log(`[Main] Found version via ID (project.latest_revision): ${versionId}`);
+                        } else if (fullProj.latest_revision?.id) {
+                             versionId = fullProj.latest_revision.id;
+                        }
                     }
                 } catch(e) {
                     console.warn(`[Main] ID fetch failed: ${e.message}`);
