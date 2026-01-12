@@ -13,10 +13,13 @@ export async function getUserProjects(username, cursor = null) {
 export async function* getAllUserProjectsGenerator(username) {
     let hasNext = true;
     let cursor = null;
+    let pageCount = 0;
     
     while(hasNext) {
+        console.log(`[API] Fetching user projects page ${pageCount}, cursor: ${cursor}`);
         try {
             const response = await getUserProjects(username, cursor);
+            console.log(`[API] Raw User Project Response:`, response);
             
             let projects = [];
             let meta = null;
@@ -29,6 +32,11 @@ export async function* getAllUserProjectsGenerator(username) {
                 meta = response.meta;
             }
 
+            console.log(`[API] Found ${projects.length} projects in page ${pageCount}`);
+            if (projects.length > 0) {
+                 console.log(`[API] Sample project item:`, projects[0]);
+            }
+
             // Yield found projects individually
             for (const p of projects) {
                 yield p;
@@ -36,7 +44,9 @@ export async function* getAllUserProjectsGenerator(username) {
 
             if (meta && meta.has_next_page && meta.end_cursor) {
                 cursor = meta.end_cursor;
+                console.log(`[API] Next cursor: ${cursor}`);
             } else {
+                console.log(`[API] No more pages.`);
                 hasNext = false;
             }
 
@@ -44,5 +54,6 @@ export async function* getAllUserProjectsGenerator(username) {
             console.error("Error fetching user projects:", e);
             throw e;
         }
+        pageCount++;
     }
 }

@@ -17,6 +17,8 @@ export async function getAllProjectRevisions(projectId) {
     let allRevisions = [];
     let hasNextPage = true;
     let afterCursor = null;
+
+    // Safety limit to prevent infinite loops on massive histories
     let pageCount = 0;
     const MAX_PAGES = 10;
 
@@ -58,7 +60,7 @@ export function parseProjectIdentifier(input) {
         if (slugMatch) return { type: 'slug', username: slugMatch[1].substring(1), slug: slugMatch[2] };
         const cMatch = pathname.match(/^\/c\/([a-z0-9_-]{20})/);
         if (cMatch) return { type: 'id', value: cMatch[1] };
-    } catch (e) { }
+    } catch (e) { /* Not a URL */ }
 
     const atSlugMatch = input.match(/^@([^/]+)\/([^/]+)/);
     if (atSlugMatch) return { type: 'slug', username: atSlugMatch[1], slug: atSlugMatch[2] };

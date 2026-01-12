@@ -32,16 +32,21 @@ const formatBytes = (bytes, decimals = 2) => {
 };
 
 const createProjectElement = (project) => {
+    // Robust fallback for project properties
+    const safeTitle = project.title || project.name || project.slug || project.id || 'Untitled';
+    const safeSlug = project.slug || project.id;
+    const safeId = project.id;
+
     const el = document.createElement('div');
     el.className = 'project-item';
-    el.id = `proj-${project.id}`;
+    el.id = `proj-${safeId}`;
     el.innerHTML = `
-        <div class="status-icon pending" id="icon-${project.id}">●</div>
+        <div class="status-icon pending" id="icon-${safeId}">●</div>
         <div class="project-info">
-            <span class="project-name">${project.title || project.slug}</span>
+            <span class="project-name">${safeTitle}</span>
             <div class="project-meta">
-                <span>/${project.slug}</span>
-                <span id="log-${project.id}" class="log-msg">Waiting...</span>
+                <span>/${safeSlug}</span>
+                <span id="log-${safeId}" class="log-msg">Waiting...</span>
             </div>
         </div>
     `;
@@ -86,7 +91,9 @@ async function processProject(project, userFolder) {
             throw new Error('No revisions found');
         }
 
-        const projectFolder = userFolder.folder(project.slug);
+        // Safety for folder name
+        const folderName = project.slug || project.id || `project_${project.id}`;
+        const projectFolder = userFolder.folder(folderName);
 
         // 2. Fetch HTML
         updateStatus(project.id, 'loading', 'Downloading HTML...');
@@ -94,7 +101,7 @@ async function processProject(project, userFolder) {
         if (html) {
             projectFolder.file('index.html', html);
         } else {
-            projectFolder.file('index.html', `<!-- Failed to fetch HTML for ${project.slug} -->`);
+            projectFolder.file('index.html', `<!-- Failed to fetch HTML for ${folderName} -->`);
         }
 
         // 3. Fetch Assets
