@@ -2,7 +2,7 @@ import JSZip from 'https://esm.sh/jszip@3.10.1';
 import { getAllUserProjectsGenerator } from './api_user.js';
 import { getProjectHtml } from './api_html.js';
 import { getAssets, processAssets } from './api_assets.js';
-import { getAllProjectRevisions } from './api_project.js';
+import { getAllProjectRevisions, getProjectById, getProjectBySlug } from './api_project.js';
 
 // --- State ---
 let isRunning = false;
@@ -71,26 +71,69 @@ const updateStatus = (projectId, status, msg) => {
 
 // --- Core Logic ---
 
-async function processProject(project, userFolder) {
+async function processProject(project, username, userFolder) {
     if (stopRequested) return;
     
+    // Use the initial ID for UI updates to ensure we target the correct DOM elements
+    const uiId = project.id; 
+
     console.log(`[Main] Processing project: ${project.id} (${project.slug})`);
-    updateStatus(project.id, 'loading', 'Fetching latest revision...');
+    updateStatus(uiId, 'loading', 'Fetching latest revision...');
     
     try {
         // 1. Get Latest Version ID
         let versionId = project.latest_revision?.id;
         
         if (!versionId) {
-             console.log(`[Main] No latest_revision in project object for ${project.id}, fetching history...`);
-             try {
-                const revisions = await getAllProjectRevisions(project.id);
-                if (revisions && revisions.length > 0) {
-                    versionId = revisions[0].id;
-                    console.log(`[Main] Found latest revision from history: ${versionId}`);
+             console.log(`[Main] No latest_revision for ${project.id}, attempting metadata refresh...`);
+             
+             // Strategy A: Fetch by Slug (Preferred as per user report)
+             if (username && project.slug) {
+                try {
+                    console.log(`[Main] Fetching metadata via slug: ${username}/${project.slug}`);
+                    const fullProj = await getProjectBySlug(username, project.slug);
+                    if (fullProj) {
+                        if (fullProj.latest_revision) {
+                            versionId = fullProj.latest_revision.id;
+                            console.log(`[Main] Found version via slug: ${versionId}`);
+                        }
+                        // Update to proper UUID if we were using a slug-as-id or missing ID
+                        if (fullProj.id && fullProj.id !== project.id) {
+                            console.log(`[Main] Updating project ID: ${project.id} -> ${fullProj.id}`);
+                            project.id = fullProj.id;
+                        }
+                    }
+                } catch(e) {
+                    console.warn(`[Main] Slug fetch failed: ${e.message}`);
                 }
-             } catch (e) {
-                 console.error(`[Main] Failed to fetch revisions: ${e.message}`);
+             }
+
+             // Strategy B: Fetch by ID
+             if (!versionId && project.id) {
+                try {
+                    console.log(`[Main] Fetching metadata via ID: ${project.id}`);
+                    const fullProj = await getProjectById(project.id);
+                    if (fullProj && fullProj.latest_revision) {
+                        versionId = fullProj.latest_revision.id;
+                        console.log(`[Main] Found version via ID: ${versionId}`);
+                    }
+                } catch(e) {
+                    console.warn(`[Main] ID fetch failed: ${e.message}`);
+                }
+             }
+
+             // Strategy C: Revision History Fallback
+             if (!versionId) {
+                 console.log(`[Main] Still no version, trying history API...`);
+                 try {
+                    const revisions = await getAllProjectRevisions(project.id);
+                    if (revisions && revisions.length > 0) {
+                        versionId = revisions[0].id;
+                        console.log(`[Main] Found latest revision from history: ${versionId}`);
+                    }
+                 } catch (e) {
+                     console.error(`[Main] Failed to fetch revisions: ${e.message}`);
+                 }
              }
         }
 
@@ -104,7 +147,7 @@ async function processProject(project, userFolder) {
 
         // 2. Fetch HTML
         if (stopRequested) return;
-        updateStatus(project.id, 'loading', 'Downloading HTML...');
+        updateStatus(uiId, 'loading', 'Downloading HTML...');
         console.log(`[Main] Fetching HTML for ${project.id}...`);
         
         const html = await getProjectHtml(project.id, versionId);
@@ -118,7 +161,7 @@ async function processProject(project, userFolder) {
 
         // 3. Fetch Assets
         if (stopRequested) return;
-        updateStatus(project.id, 'loading', 'Scanning assets...');
+        updateStatus(uiId, 'loading', 'Scanning assets...');
         console.log(`[Main] fetching asset list for ${project.id}...`);
         
         const assetList = await getAssets(project.id, versionId);
@@ -126,7 +169,7 @@ async function processProject(project, userFolder) {
         
         if (assetList.length > 0) {
             if (stopRequested) return;
-            updateStatus(project.id, 'loading', `Downloading ${assetList.length} assets...`);
+            updateStatus(uiId, 'loading', `Downloading ${assetList.length} assets...`);
             
             const assetFiles = await processAssets(assetList, project.id, versionId);
             const assetKeys = Object.keys(assetFiles);
@@ -143,12 +186,12 @@ async function processProject(project, userFolder) {
 
         processedCount++;
         statProcessed.textContent = processedCount;
-        updateStatus(project.id, 'done', 'Packaged');
+        updateStatus(uiId, 'done', 'Packaged');
         console.log(`[Main] Finished processing ${project.id}`);
 
     } catch (e) {
         console.error(`[Main] Error processing ${project.slug}:`, e);
-        updateStatus(project.id, 'error', `Failed: ${e.message}`);
+        updateStatus(uiId, 'error', `Failed: ${e.message}`);
     }
 }
 
@@ -204,7 +247,7 @@ async function startBackup() {
             }
 
             // Process immediately (Sequential for safety/simplicity)
-            await processProject(project, userFolder);
+            await processProject(project, username, userFolder);
             
             // Wait 3 seconds to avoid rate limits
             console.log('[Main] Waiting 3 seconds before next project...');
