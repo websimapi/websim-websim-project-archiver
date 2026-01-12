@@ -110,7 +110,7 @@ export async function getAssetContent(projectId, version, path) {
 }
 
 export async function processAssets(assetList, projectId, version) {
-    console.log(`[WebSimAPI] processAssets: Processing ${assetList?.length || 0} items`);
+    console.log(`[WebSimAPI] processAssets: Processing ${assetList?.length || 0} items for ${projectId}`);
     const files = {};
     const encoder = new TextEncoder();
 
@@ -148,21 +148,16 @@ export async function processAssets(assetList, projectId, version) {
             if (filename) {
                 const ts = Date.now();
                 url = `https://${projectId}.c.websim.com/${encodeURIComponent(filename)}?v=${version}&t=${ts}`;
-                console.log(`[WebSimAPI] ${path} -> Synthesized CDN URL: ${url}`);
+                // console.log(`[WebSimAPI] ${path} -> Synthesized CDN URL: ${url}`);
             }
         }
         
         // Legacy fallback: try metadata endpoint only if we still failed to get a URL
         if (!url && !isText) {
-             console.log(`[WebSimAPI] ${path} -> Missing URL, fetching metadata (legacy path)...`);
+             // console.log(`[WebSimAPI] ${path} -> Missing URL, fetching metadata (legacy path)...`);
              const meta = await getAssetMetadata(projectId, version, path);
              if (meta) {
                  url = meta.url || meta.src || meta.download_url;
-                 if (url) {
-                    console.log(`[WebSimAPI] ${path} -> Recovered URL from metadata: ${url}`);
-                 } else {
-                    console.warn(`[WebSimAPI] ${path} -> Metadata retrieved but no URL found. Keys:`, Object.keys(meta));
-                 }
              }
         }
 
@@ -217,7 +212,7 @@ export async function processAssets(assetList, projectId, version) {
                     }
                 }
 
-                console.log(`[WebSimAPI] ${path} -> CDN fetch success (${blob.byteLength} bytes)`);
+                // console.log(`[WebSimAPI] ${path} -> CDN fetch success (${blob.byteLength} bytes)`);
                 files[path] = new Uint8Array(blob);
                 return;
 
@@ -228,7 +223,6 @@ export async function processAssets(assetList, projectId, version) {
         }
 
         // Strategy C: API Content Fallback (Binary)
-        // If CDN failed or was missing, try the /content endpoint (note: often fails 400 for binary)
         if (!files[path] && !isText) {
              console.log(`[WebSimAPI] ${path} -> Attempting API Content Fallback...`);
              const content = await tryFetchContent();
@@ -251,10 +245,6 @@ export async function processAssets(assetList, projectId, version) {
         } else if (/\.(png|jpg|jpeg|gif)$/i.test(path)) {
             files[path] = EMPTY_PNG;
         } else if (isText) {
-            // If we failed to get text content, do NOT create an empty file, 
-            // because an empty JS file might break imports. 
-            // Better to let it be missing so the bundler warns or we handle it elsewhere.
-            // BUT, if it's index.html, we might want to handle it.
             if (path === 'index.html') {
                 console.error("Critical: Failed to fetch index.html");
             }
@@ -264,4 +254,19 @@ export async function processAssets(assetList, projectId, version) {
     // Limit concurrency
     await mapLimit(assetList, 5, processItem);
     return files;
+}
+
+export function searchAssets(query, mimeTypePrefix, limit = 20) {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (mimeTypePrefix) params.set('mime_type_prefix', mimeTypePrefix);
+    if (limit) params.set('limit', limit);
+    return makeRequest(`/search/assets?${params.toString()}`);
+}
+
+export function searchRelevantAssets(query, limit = 20) {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (limit) params.set('limit', limit);
+    return makeRequest(`/search/assets/relevant?${params.toString()}`);
 }

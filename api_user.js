@@ -14,16 +14,17 @@ export async function* getAllUserProjectsGenerator(username) {
     let hasNext = true;
     let cursor = null;
     let pageCount = 0;
+    const MAX_PAGES = 1000; // Safety cap
     
-    while(hasNext) {
-        console.log(`[API] Fetching user projects page ${pageCount}, cursor: ${cursor}`);
+    while(hasNext && pageCount < MAX_PAGES) {
+        console.log(`[API-User] Fetching page ${pageCount}, cursor: ${cursor}`);
         try {
             const response = await getUserProjects(username, cursor);
-            console.log(`[API] Raw User Project Response:`, response);
             
             let projects = [];
             let meta = null;
 
+            // Handle various API return shapes
             if (response.projects) {
                 projects = response.projects.data || [];
                 meta = response.projects.meta;
@@ -32,10 +33,7 @@ export async function* getAllUserProjectsGenerator(username) {
                 meta = response.meta;
             }
 
-            console.log(`[API] Found ${projects.length} projects in page ${pageCount}`);
-            if (projects.length > 0) {
-                 console.log(`[API] Sample project item:`, projects[0]);
-            }
+            console.log(`[API-User] Page ${pageCount} returned ${projects.length} projects.`);
 
             // Yield found projects individually
             for (const p of projects) {
@@ -44,14 +42,15 @@ export async function* getAllUserProjectsGenerator(username) {
 
             if (meta && meta.has_next_page && meta.end_cursor) {
                 cursor = meta.end_cursor;
-                console.log(`[API] Next cursor: ${cursor}`);
             } else {
-                console.log(`[API] No more pages.`);
+                console.log(`[API-User] No more pages available (meta.has_next_page=${meta?.has_next_page}).`);
                 hasNext = false;
             }
 
         } catch (e) {
-            console.error("Error fetching user projects:", e);
+            console.error("[API-User] Error fetching user projects page:", e);
+            // Don't crash the whole process on one failed page, but maybe stop iteration?
+            // Throwing allows main.js to catch it.
             throw e;
         }
         pageCount++;

@@ -72,23 +72,26 @@ const updateStatus = (projectId, status, msg) => {
 // --- Core Logic ---
 
 async function processProject(project, userFolder) {
+    if (stopRequested) return;
+    
+    console.log(`[Main] Processing project: ${project.id} (${project.slug})`);
     updateStatus(project.id, 'loading', 'Fetching latest revision...');
     
     try {
         // 1. Get Latest Version ID
-        // Note: Project object usually has `latest_revision` or we can fetch revisions.
         let versionId = project.latest_revision?.id;
         
-        // If not in basic object, fetch history
         if (!versionId) {
+             console.log(`[Main] No latest_revision in project object for ${project.id}, fetching history...`);
              const revisions = await getAllProjectRevisions(project.id);
              if (revisions.length > 0) {
                  versionId = revisions[0].id;
+                 console.log(`[Main] Found latest revision from history: ${versionId}`);
              }
         }
 
         if (!versionId) {
-            throw new Error('No revisions found');
+            throw new Error('No revisions found for project');
         }
 
         // Safety for folder name
@@ -96,34 +99,51 @@ async function processProject(project, userFolder) {
         const projectFolder = userFolder.folder(folderName);
 
         // 2. Fetch HTML
+        if (stopRequested) return;
         updateStatus(project.id, 'loading', 'Downloading HTML...');
+        console.log(`[Main] Fetching HTML for ${project.id}...`);
+        
         const html = await getProjectHtml(project.id, versionId);
         if (html) {
             projectFolder.file('index.html', html);
+            console.log(`[Main] HTML added to zip for ${project.id}`);
         } else {
+            console.warn(`[Main] HTML content missing for ${project.id}`);
             projectFolder.file('index.html', `<!-- Failed to fetch HTML for ${folderName} -->`);
         }
 
         // 3. Fetch Assets
+        if (stopRequested) return;
         updateStatus(project.id, 'loading', 'Scanning assets...');
+        console.log(`[Main] fetching asset list for ${project.id}...`);
+        
         const assetList = await getAssets(project.id, versionId);
+        console.log(`[Main] Found ${assetList.length} assets for ${project.id}`);
         
         if (assetList.length > 0) {
+            if (stopRequested) return;
             updateStatus(project.id, 'loading', `Downloading ${assetList.length} assets...`);
-            const assetFiles = await processAssets(assetList, project.id, versionId);
             
-            const assetsFolder = projectFolder.folder('assets');
-            for (const [path, content] of Object.entries(assetFiles)) {
-                assetsFolder.file(path, content);
+            const assetFiles = await processAssets(assetList, project.id, versionId);
+            const assetKeys = Object.keys(assetFiles);
+            console.log(`[Main] Processed ${assetKeys.length} valid asset files for ${project.id}`);
+            
+            if (assetKeys.length > 0) {
+                const assetsFolder = projectFolder.folder('assets');
+                for (const [path, content] of Object.entries(assetFiles)) {
+                    assetsFolder.file(path, content);
+                }
+                console.log(`[Main] Added assets to zip folder for ${project.id}`);
             }
         }
 
         processedCount++;
         statProcessed.textContent = processedCount;
         updateStatus(project.id, 'done', 'Packaged');
+        console.log(`[Main] Finished processing ${project.id}`);
 
     } catch (e) {
-        console.error(`Error processing ${project.slug}:`, e);
+        console.error(`[Main] Error processing ${project.slug}:`, e);
         updateStatus(project.id, 'error', `Failed: ${e.message}`);
     }
 }
@@ -131,6 +151,8 @@ async function processProject(project, userFolder) {
 async function startBackup() {
     const username = usernameInput.value.trim().replace('@', '');
     if (!username) return alert('Please enter a username');
+
+    console.log(`[Main] Starting backup for user: ${username}`);
 
     // Reset UI
     isRunning = true;
@@ -153,11 +175,16 @@ async function startBackup() {
         const userFolder = zip.folder(username);
         
         // 1. Fetch Loop (Generator)
-        // We do this semi-streaming: We fetch batches of projects, add them to UI, then process them sequentially
+        console.log(`[Main] Initializing project generator...`);
         const generator = getAllUserProjectsGenerator(username);
         
         for await (const project of generator) {
-            if (stopRequested) break;
+            if (stopRequested) {
+                console.log(`[Main] Stop requested during loop. Breaking...`);
+                break;
+            }
+
+            console.log(`[Main] Discovered project: ${project.id}`);
 
             // Add to list
             foundProjects.push(project);
@@ -165,18 +192,16 @@ async function startBackup() {
             
             const el = createProjectElement(project);
             projectListEl.appendChild(el);
-            
-            // Scroll to bottom
-            // projectListEl.scrollTop = projectListEl.scrollHeight;
 
             // Process immediately (Sequential for safety/simplicity)
-            // Ideally we could have a concurrency pool here, but for ZIP integrity and rate limits, sequential is safer.
             await processProject(project, userFolder);
         }
 
     } catch (e) {
+        console.error("[Main] Loop error:", e);
         alert(`Error fetching project list: ${e.message}`);
     } finally {
+        console.log(`[Main] Loop finished. Calling finishBackup...`);
         finishBackup();
     }
 }

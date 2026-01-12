@@ -50,7 +50,6 @@ export async function getAllProjectRevisions(projectId) {
 
 export function parseProjectIdentifier(input) {
     if (!input) return null;
-    
     try {
         const url = new URL(input.startsWith('http') ? input : `https://${input}`);
         const pathname = url.pathname;
@@ -61,15 +60,15 @@ export function parseProjectIdentifier(input) {
         const cMatch = pathname.match(/^\/c\/([a-z0-9_-]{20})/);
         if (cMatch) return { type: 'id', value: cMatch[1] };
     } catch (e) { /* Not a URL */ }
-
+    
     const atSlugMatch = input.match(/^@([^/]+)\/([^/]+)/);
     if (atSlugMatch) return { type: 'slug', username: atSlugMatch[1], slug: atSlugMatch[2] };
-
+    
     const slugMatch = input.match(/^([a-zA-Z0-9_]{3,32})\/([a-zA-Z0-9-]{3,50})$/);
     if (slugMatch) return { type: 'slug', username: slugMatch[1], slug: slugMatch[2] };
-
+    
     if (/^[a-z0-9_-]{20}$/.test(input)) return { type: 'id', value: input };
-
+    
     throw new Error(`Invalid project identifier: "${input}".`);
 }
 
