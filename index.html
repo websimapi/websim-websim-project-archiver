@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSim Project Archiver</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="module" src="main.js"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="title-group">
+            <h1>WebSim Archiver</h1>
+            <span>Backup user projects to .zip</span>
+        </div>
+        <div class="controls">
+            <input type="text" id="username" placeholder="Enter username (e.g. @user)" autocomplete="off">
+            <button id="start-btn">Start Backup</button>
+            <button id="stop-btn" class="stop" disabled>Stop & Save</button>
+        </div>
+    </header>
+
+    <div class="main-content">
+        <div class="stats-bar">
+            <div class="stat-card">
+                <span class="stat-val" id="stat-total">0</span>
+                <span class="stat-label">Projects Found</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-val" id="stat-processed">0</span>
+                <span class="stat-label">Processed</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-val" id="stat-size">0 Bytes</span>
+                <span class="stat-label">Archive Size (Est)</span>
+            </div>
+        </div>
+
+        <div id="project-list" class="project-list">
+            <!-- Project items injected here -->
+            <div style="text-align:center; color: var(--text-dim); padding: 2rem;">
+                Enter a username and click "Start Backup" to begin scanning.
+            </div>
+        </div>
+    </div>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
