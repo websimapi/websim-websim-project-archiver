@@ -18,25 +18,43 @@ export async function getAllProjectRevisions(projectId) {
     let allRevisions = [];
     let hasNextPage = true;
     let afterCursor = null;
-
-    // Safety limit to prevent infinite loops on massive histories
     let pageCount = 0;
     const MAX_PAGES = 10;
 
     while (hasNextPage && pageCount < MAX_PAGES) {
         const params = { first: 50 };
-        if (afterCursor) {
-            params.after = afterCursor;
-        }
+        if (afterCursor) params.after = afterCursor;
 
         try {
             const response = await getProjectRevisions(projectId, params);
-            if (response.revisions && response.revisions.data) {
-                allRevisions = allRevisions.concat(response.revisions.data);
+            console.log(`[API-Project] Rev page ${pageCount} response keys:`, Object.keys(response));
+            
+            let pageData = [];
+            let meta = null;
+
+            if (response.revisions) {
+                if (Array.isArray(response.revisions)) {
+                    pageData = response.revisions;
+                } else if (response.revisions.data) {
+                    pageData = response.revisions.data;
+                    meta = response.revisions.meta;
+                }
+            } else if (response.data) {
+                pageData = response.data;
+                meta = response.meta;
+            } else if (Array.isArray(response)) {
+                pageData = response;
+            }
+
+            if (pageData.length > 0) {
+                console.log(`[API-Project] Found ${pageData.length} revisions. First item keys:`, Object.keys(pageData[0] || {}));
+                allRevisions = allRevisions.concat(pageData);
+            } else {
+                console.warn(`[API-Project] Page ${pageCount} returned no revisions.`);
             }
             
-            hasNextPage = response.revisions?.meta?.has_next_page || false;
-            afterCursor = response.revisions?.meta?.end_cursor;
+            hasNextPage = meta?.has_next_page || false;
+            afterCursor = meta?.end_cursor;
             
             if (!afterCursor) hasNextPage = false;
         } catch (e) {
@@ -45,7 +63,6 @@ export async function getAllProjectRevisions(projectId) {
         }
         pageCount++;
     }
-
     return allRevisions;
 }
 

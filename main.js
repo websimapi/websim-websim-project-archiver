@@ -77,31 +77,44 @@ async function processProject(project, username, userFolder) {
     // Use the initial ID for UI updates to ensure we target the correct DOM elements
     const uiId = project.id; 
 
-    console.log(`[Main] Processing project: ${project.id} (${project.slug})`);
+    console.log(`[Main] Processing project: ${project.id} (slug: ${project.slug})`);
+    console.log(`[Main] Project keys available:`, Object.keys(project));
+    
     updateStatus(uiId, 'loading', 'Fetching latest revision...');
     
     try {
         // 1. Get Latest Version ID
         let versionId = project.latest_revision?.id;
         
+        // Sometimes it's directly in 'latest_version' or 'revision'
+        if (!versionId && project.latest_version) versionId = project.latest_version.id;
+        if (!versionId && project.revision) versionId = project.revision.id;
+
         if (!versionId) {
-             console.log(`[Main] No latest_revision for ${project.id}, attempting metadata refresh...`);
+             console.log(`[Main] No latest_revision for ${project.id}, attempting strategies...`);
              
-             // Strategy A: Fetch by Slug (Preferred as per user report)
+             // Strategy A: Fetch by Slug
              if (username && project.slug) {
                 try {
-                    console.log(`[Main] Fetching metadata via slug: ${username}/${project.slug}`);
+                    console.log(`[Main] A: Fetching metadata via slug: ${username}/${project.slug}`);
                     const fullProj = await getProjectBySlug(username, project.slug);
                     if (fullProj) {
+                        console.log(`[Main] Slug lookup returned keys:`, Object.keys(fullProj));
                         if (fullProj.latest_revision) {
                             versionId = fullProj.latest_revision.id;
                             console.log(`[Main] Found version via slug: ${versionId}`);
+                        } else if (fullProj.revision) {
+                            versionId = fullProj.revision.id;
+                             console.log(`[Main] Found version via slug (.revision): ${versionId}`);
                         }
-                        // Update to proper UUID if we were using a slug-as-id or missing ID
+                        
+                        // Update to proper UUID
                         if (fullProj.id && fullProj.id !== project.id) {
                             console.log(`[Main] Updating project ID: ${project.id} -> ${fullProj.id}`);
                             project.id = fullProj.id;
                         }
+                    } else {
+                        console.warn(`[Main] Slug lookup returned null/undefined`);
                     }
                 } catch(e) {
                     console.warn(`[Main] Slug fetch failed: ${e.message}`);
@@ -111,8 +124,10 @@ async function processProject(project, username, userFolder) {
              // Strategy B: Fetch by ID
              if (!versionId && project.id) {
                 try {
-                    console.log(`[Main] Fetching metadata via ID: ${project.id}`);
+                    console.log(`[Main] B: Fetching metadata via ID: ${project.id}`);
                     const fullProj = await getProjectById(project.id);
+                    console.log(`[Main] ID lookup keys:`, Object.keys(fullProj || {}));
+                    
                     if (fullProj && fullProj.latest_revision) {
                         versionId = fullProj.latest_revision.id;
                         console.log(`[Main] Found version via ID: ${versionId}`);
@@ -124,12 +139,20 @@ async function processProject(project, username, userFolder) {
 
              // Strategy C: Revision History Fallback
              if (!versionId) {
-                 console.log(`[Main] Still no version, trying history API...`);
+                 console.log(`[Main] C: Trying history API...`);
                  try {
                     const revisions = await getAllProjectRevisions(project.id);
                     if (revisions && revisions.length > 0) {
-                        versionId = revisions[0].id;
-                        console.log(`[Main] Found latest revision from history: ${versionId}`);
+                        // Find first valid ID
+                        const validRev = revisions.find(r => r && r.id);
+                        if (validRev) {
+                            versionId = validRev.id;
+                            console.log(`[Main] Found latest revision from history: ${versionId}`);
+                        } else {
+                             console.error(`[Main] Revisions found but missing IDs. First item:`, revisions[0]);
+                        }
+                    } else {
+                        console.warn(`[Main] No revisions returned from history API.`);
                     }
                  } catch (e) {
                      console.error(`[Main] Failed to fetch revisions: ${e.message}`);
@@ -138,7 +161,9 @@ async function processProject(project, username, userFolder) {
         }
 
         if (!versionId) {
-            throw new Error('No revisions found for project (and history fetch failed or was empty)');
+             // Debug dump before failing
+             console.error(`[Main] FAILED to find version. Project Dump:`, JSON.stringify(project, null, 2));
+             throw new Error('No revisions found for project (all strategies failed)');
         }
 
         // Safety for folder name

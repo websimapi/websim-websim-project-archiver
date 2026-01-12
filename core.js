@@ -9,6 +9,10 @@ export async function makeRequest(path, options = {}) {
         if (!res.ok) {
             const text = await res.text();
             console.error(`[Core] Request failed (${res.status}): ${url}`, text);
+            try {
+                const jsonErr = JSON.parse(text);
+                console.error("[Core] Error Details:", jsonErr);
+            } catch(e) {}
             throw new Error(`Request failed: ${res.status} - ${text}`);
         }
         return await res.json();
