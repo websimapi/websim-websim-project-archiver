@@ -34,34 +34,12 @@ export async function getAllProjectRevisions(projectId) {
 
         try {
             const response = await getProjectRevisions(projectId, params);
-            let pageData = [];
-            let meta = null;
-            
-            // Robust unwrapping of response structure
-            if (response.revisions) {
-                if (Array.isArray(response.revisions)) {
-                     pageData = response.revisions;
-                } else {
-                     pageData = response.revisions.data || [];
-                     meta = response.revisions.meta;
-                }
-            } else if (response.data) {
-                pageData = response.data;
-                meta = response.meta;
-            }
-
-            if (pageData.length > 0) {
-                 // Handle nested revision objects (e.g. { project_revision: {...} })
-                 const cleaned = pageData.map(item => {
-                     if (item.project_revision) return item.project_revision;
-                     if (item.revision) return item.revision;
-                     return item;
-                 });
-                 allRevisions = allRevisions.concat(cleaned);
+            if (response.revisions && response.revisions.data) {
+                allRevisions = allRevisions.concat(response.revisions.data);
             }
             
-            hasNextPage = meta?.has_next_page || false;
-            afterCursor = meta?.end_cursor;
+            hasNextPage = response.revisions?.meta?.has_next_page || false;
+            afterCursor = response.revisions?.meta?.end_cursor;
             
             if (!afterCursor) hasNextPage = false;
         } catch (e) {
@@ -76,25 +54,30 @@ export async function getAllProjectRevisions(projectId) {
 
 export function parseProjectIdentifier(input) {
     if (!input) return null;
+    
     try {
         const url = new URL(input.startsWith('http') ? input : `https://${input}`);
         const pathname = url.pathname;
+
         const projectMatch = pathname.match(/^\/p\/([a-z0-9_-]{20})/);
         if (projectMatch) return { type: 'id', value: projectMatch[1] };
+
         const slugMatch = pathname.match(/^\/(@[^/]+)\/([^/]+)/);
         if (slugMatch) return { type: 'slug', username: slugMatch[1].substring(1), slug: slugMatch[2] };
+        
         const cMatch = pathname.match(/^\/c\/([a-z0-9_-]{20})/);
         if (cMatch) return { type: 'id', value: cMatch[1] };
+
     } catch (e) { /* Not a URL */ }
-    
+
     const atSlugMatch = input.match(/^@([^/]+)\/([^/]+)/);
     if (atSlugMatch) return { type: 'slug', username: atSlugMatch[1], slug: atSlugMatch[2] };
-    
+
     const slugMatch = input.match(/^([a-zA-Z0-9_]{3,32})\/([a-zA-Z0-9-]{3,50})$/);
     if (slugMatch) return { type: 'slug', username: slugMatch[1], slug: slugMatch[2] };
-    
+
     if (/^[a-z0-9_-]{20}$/.test(input)) return { type: 'id', value: input };
-    
+
     throw new Error(`Invalid project identifier: "${input}".`);
 }
 
