@@ -18,50 +18,46 @@ export function getRevisionDetails(projectId, revisionId) {
 }
 
 export async function getAllProjectRevisions(projectId) {
-    console.log(`[API-Project] getAllProjectRevisions for ${projectId}`);
     let allRevisions = [];
     let hasNextPage = true;
     let afterCursor = null;
+
+    // Safety limit to prevent infinite loops on massive histories
     let pageCount = 0;
     const MAX_PAGES = 10;
 
     while (hasNextPage && pageCount < MAX_PAGES) {
         const params = { first: 50 };
-        if (afterCursor) params.after = afterCursor;
+        if (afterCursor) {
+            params.after = afterCursor;
+        }
 
         try {
             const response = await getProjectRevisions(projectId, params);
-            console.log(`[API-Project] Rev page ${pageCount} response keys:`, Object.keys(response));
-            
             let pageData = [];
             let meta = null;
-
+            
+            // Robust unwrapping of response structure
             if (response.revisions) {
                 if (Array.isArray(response.revisions)) {
-                    pageData = response.revisions;
-                } else if (response.revisions.data) {
-                    pageData = response.revisions.data;
-                    meta = response.revisions.meta;
+                     pageData = response.revisions;
+                } else {
+                     pageData = response.revisions.data || [];
+                     meta = response.revisions.meta;
                 }
             } else if (response.data) {
                 pageData = response.data;
                 meta = response.meta;
-            } else if (Array.isArray(response)) {
-                pageData = response;
             }
 
             if (pageData.length > 0) {
-                console.log(`[API-Project] Found ${pageData.length} revisions. First item keys:`, Object.keys(pageData[0] || {}));
-                // Unwrap revisions if they are nested in project_revision or revision
-                const unwrapped = pageData.map(item => {
-                    if (item.project_revision) return item.project_revision;
-                    if (item.revision) return item.revision;
-                    return item;
-                }).filter(r => r && r.id); // Ensure we have valid objects with IDs
-                
-                allRevisions = allRevisions.concat(unwrapped);
-            } else {
-                console.warn(`[API-Project] Page ${pageCount} returned no revisions.`);
+                 // Handle nested revision objects (e.g. { project_revision: {...} })
+                 const cleaned = pageData.map(item => {
+                     if (item.project_revision) return item.project_revision;
+                     if (item.revision) return item.revision;
+                     return item;
+                 });
+                 allRevisions = allRevisions.concat(cleaned);
             }
             
             hasNextPage = meta?.has_next_page || false;
@@ -69,11 +65,12 @@ export async function getAllProjectRevisions(projectId) {
             
             if (!afterCursor) hasNextPage = false;
         } catch (e) {
-            console.error(`[API-Project] Error fetching revision page ${pageCount}:`, e);
+            console.warn("Error fetching revision page", e);
             hasNextPage = false;
         }
         pageCount++;
     }
+
     return allRevisions;
 }
 

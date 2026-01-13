@@ -74,9 +74,8 @@ export async function getAssets(projectId, version) {
                 pageData = res.data;
                 meta = res.meta;
             }
-            
-            console.log(`[WebSimAPI] Page ${page} found ${pageData.length} assets.`);
 
+            console.log(`[WebSimAPI] Page ${page} found ${pageData.length} assets.`);
             if (pageData.length > 0) allAssets.push(...pageData);
 
             if (meta && meta.has_next_page && meta.end_cursor) {
@@ -90,6 +89,7 @@ export async function getAssets(projectId, version) {
         }
         page++;
     }
+
     console.log(`[WebSimAPI] Total assets fetched: ${allAssets.length}`);
     return allAssets;
 }
@@ -110,7 +110,7 @@ export async function getAssetContent(projectId, version, path) {
 }
 
 export async function processAssets(assetList, projectId, version) {
-    console.log(`[WebSimAPI] processAssets: Processing ${assetList?.length || 0} items for ${projectId}`);
+    console.log(`[WebSimAPI] processAssets: Processing ${assetList?.length || 0} items`);
     const files = {};
     const encoder = new TextEncoder();
 
@@ -136,7 +136,7 @@ export async function processAssets(assetList, projectId, version) {
         }
 
         const isText = /\.(html|js|mjs|jsx|ts|tsx|css|json|txt|md|xml|svg|csv)$/i.test(path);
-
+        
         // 2. Identify URL & Metadata Recovery
         // Sometimes the asset list is sparse, so we check various keys or fetch detailed metadata
         let url = asset.url || asset.src || asset.uri || asset.download_url;
@@ -154,10 +154,15 @@ export async function processAssets(assetList, projectId, version) {
         
         // Legacy fallback: try metadata endpoint only if we still failed to get a URL
         if (!url && !isText) {
-             // console.log(`[WebSimAPI] ${path} -> Missing URL, fetching metadata (legacy path)...`);
+             console.log(`[WebSimAPI] ${path} -> Missing URL, fetching metadata (legacy path)...`);
              const meta = await getAssetMetadata(projectId, version, path);
              if (meta) {
                  url = meta.url || meta.src || meta.download_url;
+                 if (url) {
+                     console.log(`[WebSimAPI] ${path} -> Recovered URL from metadata: ${url}`);
+                 } else {
+                     console.warn(`[WebSimAPI] ${path} -> Metadata retrieved but no URL found. Keys:`, Object.keys(meta));
+                 }
              }
         }
 
@@ -195,24 +200,24 @@ export async function processAssets(assetList, projectId, version) {
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 
                 const blob = await res.arrayBuffer();
-                
+
                 // Validate content
                 if (/\.(mp3|wav|ogg|glb|gltf|png|jpg|jpeg|gif)$/i.test(path)) {
                     const contentType = res.headers.get('content-type');
                     // Sanity check: don't save HTML error pages as MP3s
                     if (contentType && (contentType.includes('text/html') || contentType.includes('application/json'))) {
-                        throw new Error(`Invalid content-type: ${contentType}`);
+                         throw new Error(`Invalid content-type: ${contentType}`);
                     }
                     if (blob.byteLength > 0) {
                         const header = new Uint8Array(blob.slice(0, 100));
                         const textHeader = new TextDecoder().decode(header).trim().toLowerCase();
                         if (textHeader.startsWith('<!doctype') || textHeader.startsWith('<html')) {
-                            throw new Error(`Content sniffer detected HTML signature in binary file`);
+                             throw new Error(`Content sniffer detected HTML signature in binary file`);
                         }
                     }
                 }
-
-                // console.log(`[WebSimAPI] ${path} -> CDN fetch success (${blob.byteLength} bytes)`);
+                
+                console.log(`[WebSimAPI] ${path} -> CDN fetch success (${blob.byteLength} bytes)`);
                 files[path] = new Uint8Array(blob);
                 return;
 
@@ -223,6 +228,7 @@ export async function processAssets(assetList, projectId, version) {
         }
 
         // Strategy C: API Content Fallback (Binary)
+        // If CDN failed or was missing, try the /content endpoint (note: often fails 400 for binary)
         if (!files[path] && !isText) {
              console.log(`[WebSimAPI] ${path} -> Attempting API Content Fallback...`);
              const content = await tryFetchContent();
@@ -245,9 +251,13 @@ export async function processAssets(assetList, projectId, version) {
         } else if (/\.(png|jpg|jpeg|gif)$/i.test(path)) {
             files[path] = EMPTY_PNG;
         } else if (isText) {
-            if (path === 'index.html') {
-                console.error("Critical: Failed to fetch index.html");
-            }
+             // If we failed to get text content, do NOT create an empty file, 
+             // because an empty JS file might break imports. 
+             // Better to let it be missing so the bundler warns or we handle it elsewhere.
+             // BUT, if it's index.html, we might want to handle it.
+             if (path === 'index.html') {
+                 console.error("Critical: Failed to fetch index.html");
+             }
         }
     };
 

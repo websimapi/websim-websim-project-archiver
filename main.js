@@ -245,18 +245,23 @@ async function processProject(project, username, userFolder) {
                 const assetKeys = Object.keys(assetFiles);
                 
                 if (assetKeys.length > 0) {
-                    // Write directly to project folder (preserving paths), NOT into 'assets/' subfolder
-                    // unless the path itself contains it. This fixes relative links.
+                    // Write directly to project folder (preserving paths).
                     for (const [path, content] of Object.entries(assetFiles)) {
-                        // Avoid overwriting source files (e.g. index.html) unless strictly necessary? 
-                        // Usually assets don't collide with source files.
+                        // Check if we are overwriting index.html which we might have fetched from source
+                        if (path === 'index.html' && sourceFiles['index.html']) {
+                            console.log('[Main] Skipping asset index.html as source takes precedence.');
+                            continue;
+                        }
                         projectFolder.file(path, content);
                     }
                     console.log(`[Main] Added ${assetKeys.length} assets to zip.`);
                 }
+            } else {
+                 console.log('[Main] No assets found in list.');
             }
         } catch (e) {
             console.warn(`[Main] Asset processing failed:`, e);
+            // Don't fail the whole project for asset errors, just log it
         }
 
         processedCount++;
