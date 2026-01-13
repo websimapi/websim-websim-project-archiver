@@ -1,8 +1,8 @@
-import JSZip from 'https://esm.sh/jszip@3.10.1';
+import JSZip from 'jszip';
 import { getAllUserProjectsGenerator } from './api_user.js';
 import { getProjectHtml } from './api_html.js';
 import { getAssets, processAssets } from './api_assets.js';
-import { getAllProjectRevisions, getProjectById, getProjectBySlug, getRevisionDetails } from './api_project.js';
+import { getAllProjectRevisions, getProjectById, getProjectBySlug } from './api_project.js';
 
 // --- State ---
 let isRunning = false;
@@ -78,17 +78,16 @@ async function processProject(project, username, userFolder) {
     const uiId = project.id; 
 
     console.log(`[Main] Processing project: ${project.id} (slug: ${project.slug})`);
-    console.log(`[Main] Project keys available:`, Object.keys(project));
     
     updateStatus(uiId, 'loading', 'Fetching latest revision...');
     
     try {
-        // 1. Get Latest Version ID
+        // 1. Get Latest Version ID (Robust strategy)
         let versionId = project.latest_revision?.id;
-        
-        // Sometimes it's directly in 'latest_version' or 'revision'
         if (!versionId && project.latest_version) versionId = project.latest_version.id;
         if (!versionId && project.revision) versionId = project.revision.id;
+        // Fallback: If not uuid, maybe int version?
+        if (!versionId && project.current_version) versionId = project.current_version;
 
         if (!versionId) {
              console.log(`[Main] No latest_revision for ${project.id}, attempting strategies...`);
@@ -96,178 +95,85 @@ async function processProject(project, username, userFolder) {
              // Strategy A: Fetch by Slug
              if (username && project.slug) {
                 try {
-                    console.log(`[Main] A: Fetching metadata via slug: ${username}/${project.slug}`);
                     const fullProj = await getProjectBySlug(username, project.slug);
                     if (fullProj) {
-                        console.log(`[Main] Slug lookup returned keys:`, Object.keys(fullProj));
+                        if (fullProj.project_revision && fullProj.project_revision.id) versionId = fullProj.project_revision.id;
+                        else if (fullProj.project && fullProj.project.latest_revision?.id) versionId = fullProj.project.latest_revision.id;
+                        else if (fullProj.latest_revision?.id) versionId = fullProj.latest_revision.id;
                         
-                        // Handle wrapped responses (e.g. { project_revision: {...}, project: {...} })
-                        if (fullProj.project_revision && fullProj.project_revision.id) {
-                             versionId = fullProj.project_revision.id;
-                             console.log(`[Main] Found version via slug (project_revision): ${versionId}`);
-                        } else if (fullProj.project && fullProj.project.latest_revision?.id) {
-                             versionId = fullProj.project.latest_revision.id;
-                             console.log(`[Main] Found version via slug (project.latest_revision): ${versionId}`);
-                        } else if (fullProj.latest_revision?.id) {
-                            versionId = fullProj.latest_revision.id;
-                        }
-
-                        // Update to proper UUID if found in wrapped object
+                        // Fix ID if redirected
                         const foundProjId = fullProj.project?.id || fullProj.id;
-                        if (foundProjId && foundProjId !== project.id) {
-                            console.log(`[Main] Updating project ID: ${project.id} -> ${foundProjId}`);
-                            project.id = foundProjId;
-                        }
+                        if (foundProjId && foundProjId !== project.id) project.id = foundProjId;
                     }
-                } catch(e) {
-                    console.warn(`[Main] Slug fetch failed: ${e.message}`);
-                }
+                } catch(e) { console.warn(`[Main] Slug fetch failed: ${e.message}`); }
              }
 
              // Strategy B: Fetch by ID
              if (!versionId && project.id) {
                 try {
-                    console.log(`[Main] B: Fetching metadata via ID: ${project.id}`);
                     const fullProj = await getProjectById(project.id);
                     if (fullProj) {
-                        console.log(`[Main] ID lookup keys:`, Object.keys(fullProj));
-                        
-                        // Handle wrapped responses
-                        if (fullProj.project_revision && fullProj.project_revision.id) {
-                             versionId = fullProj.project_revision.id;
-                             console.log(`[Main] Found version via ID (project_revision): ${versionId}`);
-                        } else if (fullProj.project && fullProj.project.latest_revision?.id) {
-                             versionId = fullProj.project.latest_revision.id;
-                             console.log(`[Main] Found version via ID (project.latest_revision): ${versionId}`);
-                        } else if (fullProj.latest_revision?.id) {
-                             versionId = fullProj.latest_revision.id;
-                        }
+                         if (fullProj.project_revision && fullProj.project_revision.id) versionId = fullProj.project_revision.id;
+                         else if (fullProj.project && fullProj.project.latest_revision?.id) versionId = fullProj.project.latest_revision.id;
+                         else if (fullProj.latest_revision?.id) versionId = fullProj.latest_revision.id;
                     }
-                } catch(e) {
-                    console.warn(`[Main] ID fetch failed: ${e.message}`);
-                }
+                } catch(e) { console.warn(`[Main] ID fetch failed: ${e.message}`); }
              }
 
              // Strategy C: Revision History Fallback
              if (!versionId) {
-                 console.log(`[Main] C: Trying history API...`);
                  try {
                     const revisions = await getAllProjectRevisions(project.id);
-                    if (revisions && revisions.length > 0) {
-                        // Find first valid ID
-                        const validRev = revisions.find(r => r && r.id);
-                        if (validRev) {
-                            versionId = validRev.id;
-                            console.log(`[Main] Found latest revision from history: ${versionId}`);
-                        } else {
-                             console.error(`[Main] Revisions found but missing IDs. First item:`, revisions[0]);
-                        }
-                    } else {
-                        console.warn(`[Main] No revisions returned from history API.`);
-                    }
-                 } catch (e) {
-                     console.error(`[Main] Failed to fetch revisions: ${e.message}`);
-                 }
+                    const validRev = revisions.find(r => r && r.id);
+                    if (validRev) versionId = validRev.id;
+                 } catch (e) { console.error(`[Main] Failed to fetch revisions: ${e.message}`); }
              }
         }
 
         if (!versionId) {
-             // Debug dump before failing
-             console.error(`[Main] FAILED to find version. Project Dump:`, JSON.stringify(project, null, 2));
              throw new Error('No revisions found for project (all strategies failed)');
         }
+
+        console.log(`[Main] Resolved version for ${project.id}: ${versionId}`);
 
         // Safety for folder name
         const folderName = project.slug || project.id || `project_${project.id}`;
         const projectFolder = userFolder.folder(folderName);
 
-        // 2. Fetch Source Files (HTML, CSS, JS, etc.)
-        if (stopRequested) return;
-        updateStatus(uiId, 'loading', 'Downloading source files...');
+        // 2. Fetch Assets & HTML (New Robust Pipeline)
+        updateStatus(uiId, 'loading', 'Downloading files...');
         
-        let sourceFiles = {};
-        try {
-            const revData = await getRevisionDetails(project.id, versionId);
-            const rev = revData.revision || revData; // Handle nested response
-
-            // A. Check 'files' object (Standard for multi-file projects)
-            if (rev.files) {
-                for (const [filename, fileData] of Object.entries(rev.files)) {
-                    // fileData might be a string or an object {content: "..."}
-                    const content = typeof fileData === 'string' ? fileData : fileData.content;
-                    if (content) sourceFiles[filename] = content;
-                }
-            }
-
-            // B. Check Legacy/Single-file fields
-            if (!sourceFiles['index.html']) {
-                if (rev.html) sourceFiles['index.html'] = rev.html;
-                else if (rev.content && typeof rev.content === 'string') sourceFiles['index.html'] = rev.content;
-            }
-            if (!sourceFiles['style.css'] && rev.css) sourceFiles['style.css'] = rev.css;
-            if (!sourceFiles['script.js'] && rev.js) sourceFiles['script.js'] = rev.js;
-
-        } catch (e) {
-            console.warn(`[Main] Error fetching revision details:`, e);
-        }
-
-        // C. Last Resort for HTML
-        if (!sourceFiles['index.html']) {
-             console.log(`[Main] HTML not found in metadata, trying direct endpoint...`);
-             const html = await getProjectHtml(project.id, versionId);
-             if (html) sourceFiles['index.html'] = html;
-        }
-
-        // Write Source Files to Zip
-        const sourceKeys = Object.keys(sourceFiles);
-        if (sourceKeys.length > 0) {
-            for (const [name, content] of Object.entries(sourceFiles)) {
-                projectFolder.file(name, content);
-            }
-            console.log(`[Main] Added ${sourceKeys.length} source files to zip.`);
-        } else {
-            projectFolder.file('index.html', `<!-- Failed to fetch source files for ${project.id} -->`);
-        }
-
-        // 3. Fetch Uploaded Assets (Images, Sounds, etc.)
-        if (stopRequested) return;
-        updateStatus(uiId, 'loading', 'Scanning assets...');
+        // Fetch asset list and HTML content in parallel
+        const [assetList, htmlContent] = await Promise.all([
+            getAssets(project.id, versionId),
+            getProjectHtml(project.id, versionId)
+        ]);
         
-        try {
-            const assetList = await getAssets(project.id, versionId);
-            console.log(`[Main] Found ${assetList.length} assets for ${project.id}`);
-            
-            if (assetList.length > 0) {
-                if (stopRequested) return;
-                updateStatus(uiId, 'loading', `Downloading ${assetList.length} assets...`);
-                
-                const assetFiles = await processAssets(assetList, project.id, versionId);
-                const assetKeys = Object.keys(assetFiles);
-                
-                if (assetKeys.length > 0) {
-                    // Write directly to project folder (preserving paths).
-                    for (const [path, content] of Object.entries(assetFiles)) {
-                        // Check if we are overwriting index.html which we might have fetched from source
-                        if (path === 'index.html' && sourceFiles['index.html']) {
-                            console.log('[Main] Skipping asset index.html as source takes precedence.');
-                            continue;
-                        }
-                        projectFolder.file(path, content);
-                    }
-                    console.log(`[Main] Added ${assetKeys.length} assets to zip.`);
-                }
-            } else {
-                 console.log('[Main] No assets found in list.');
-            }
-        } catch (e) {
-            console.warn(`[Main] Asset processing failed:`, e);
-            // Don't fail the whole project for asset errors, just log it
+        console.log(`[Main] Found ${assetList.length} assets.`);
+
+        // 3. Process Assets
+        updateStatus(uiId, 'loading', `Downloading ${assetList.length} assets...`);
+        const files = await processAssets(assetList, project.id, versionId);
+
+        // 4. Inject HTML
+        if (htmlContent) {
+            files['index.html'] = new TextEncoder().encode(htmlContent);
+        } else if (!files['index.html']) {
+            files['index.html'] = new TextEncoder().encode(`<html><body><h1>${project.title || 'Untitled'}</h1><p>Source unavailable.</p></body></html>`);
+        }
+
+        // 5. Write to Zip Folder
+        const fileCount = Object.keys(files).length;
+        for (const [path, content] of Object.entries(files)) {
+            // Clean path logic is already in processAssets, but double check
+            const cleanPath = path.replace(/^\/+/, '');
+            projectFolder.file(cleanPath, content);
         }
 
         processedCount++;
         statProcessed.textContent = processedCount;
         updateStatus(uiId, 'done', 'Packaged');
-        console.log(`[Main] Finished processing ${project.id}`);
+        console.log(`[Main] Finished processing ${project.id} (${fileCount} files)`);
 
     } catch (e) {
         console.error(`[Main] Error processing ${project.slug}:`, e);

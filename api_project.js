@@ -13,10 +13,6 @@ export function getProjectRevisions(projectId, params = {}) {
     return makeRequest(`/projects/${projectId}/revisions?${query}`);
 }
 
-export function getRevisionDetails(projectId, revisionId) {
-    return makeRequest(`/projects/${projectId}/revisions/${revisionId}`);
-}
-
 export async function getAllProjectRevisions(projectId) {
     let allRevisions = [];
     let hasNextPage = true;
