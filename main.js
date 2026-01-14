@@ -12,6 +12,13 @@ let processedCount = 0;
 let zip = null; // Used for Batch mode
 let currentZipSize = 0;
 
+let resumeState = {
+    active: false,
+    username: null,
+    cursor: null,
+    processedIds: new Set()
+};
+
 // --- DOM Elements ---
 const usernameInput = document.getElementById('username');
 const startBtn = document.getElementById('start-btn');
@@ -27,6 +34,18 @@ const dateEndInput = document.getElementById('date-end');
 const downloadModeInput = document.getElementById('download-mode');
 const delayInput = document.getElementById('delay-ms');
 const skipForksInput = document.getElementById('skip-forks');
+
+// Reset resume state when settings change
+[usernameInput, dateStartInput, dateEndInput, downloadModeInput, skipForksInput].forEach(el => {
+    if (el) el.addEventListener('change', () => {
+        resumeState.active = false;
+        resumeState.cursor = null;
+        resumeState.processedIds.clear();
+        if (startBtn.textContent === "Resume Backup") {
+            startBtn.textContent = "Start Backup";
+        }
+    });
+});
 
 // --- Helpers ---
 const formatBytes = (bytes, decimals = 2) => {
@@ -189,17 +208,32 @@ async function startBackup() {
 
     console.log(`[Main] Backup config: User=${username}, Mode=${mode}, Delay=${delay}, SkipForks=${skipForks}`);
 
-    // Reset UI
+    // Determine if we are resuming
+    const isResuming = resumeState.active && resumeState.username === username;
+
+    // Reset UI / State
     isRunning = true;
     stopRequested = false;
-    foundProjects = [];
-    processedCount = 0;
-    zip = new JSZip(); // Always init for potential Batch usage
     
-    projectListEl.innerHTML = '';
-    statTotal.textContent = '0';
+    if (!isResuming) {
+        // Fresh Start
+        resumeState.active = false;
+        resumeState.username = username;
+        resumeState.cursor = null;
+        resumeState.processedIds.clear();
+
+        foundProjects = [];
+        projectListEl.innerHTML = '';
+        statTotal.textContent = '0';
+    } else {
+        console.log(`[Main] Resuming backup from cursor: ${resumeState.cursor}`);
+    }
+    
+    // Always reset session stats (new zip, new run count)
+    processedCount = 0;
     statProcessed.textContent = '0';
     statSize.textContent = '0 Bytes';
+    zip = new JSZip(); // Always new zip for the session (prevents memory bloat on resume)
     
     startBtn.disabled = true;
     stopBtn.disabled = false;
@@ -208,10 +242,15 @@ async function startBackup() {
 
     try {
         const userFolder = zip.folder(username);
-        const generator = getAllUserProjectsGenerator(username);
+        const generator = getAllUserProjectsGenerator(username, isResuming ? resumeState.cursor : null);
         
         for await (const project of generator) {
             if (stopRequested) break;
+            
+            // Resume Check: If we already processed this ID in a previous partial run, skip it
+            if (resumeState.processedIds.has(project.id)) {
+                continue;
+            }
 
             // --- FILTERING LOGIC ---
             
@@ -245,6 +284,10 @@ async function startBackup() {
                 mode: mode,
                 rootZipFolder: userFolder
             });
+
+            // Mark as processed for resume capability
+            resumeState.processedIds.add(project.id);
+            resumeState.cursor = project._batchCursor; // Update cursor to the one that fetched this project
             
             // Rate Limit
             if (delay > 0) {
@@ -268,15 +311,26 @@ async function finishBackup(mode) {
     stopBtn.textContent = "Stop";
     usernameInput.disabled = false;
 
+    if (stopRequested) {
+        // Paused
+        resumeState.active = true;
+        startBtn.textContent = "Resume Backup";
+        console.log("Backup paused. Resume state saved.");
+    } else {
+        // Completed naturally
+        resumeState.active = false;
+        startBtn.textContent = "Start Backup";
+    }
+
     // In individual mode, we are done.
     if (mode === 'individual') {
-        alert(`Done! Processed ${processedCount} projects.`);
+        if (!stopRequested) alert(`Done! Processed ${processedCount} projects.`);
         return;
     }
 
     // In batch mode, we check if we have anything to zip
     if (processedCount === 0) {
-        alert("No projects were processed.");
+        if (!stopRequested) alert("No projects were processed.");
         return;
     }
 

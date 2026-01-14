@@ -10,9 +10,9 @@ export async function getUserProjects(username, cursor = null) {
     return makeRequest(`/users/${username}/projects?${params.toString()}`);
 }
 
-export async function* getAllUserProjectsGenerator(username) {
+export async function* getAllUserProjectsGenerator(username, startCursor = null) {
     let hasNext = true;
-    let cursor = null;
+    let cursor = startCursor;
     let pageCount = 0;
     const MAX_PAGES = 1000; // Safety cap
     
@@ -48,8 +48,14 @@ export async function* getAllUserProjectsGenerator(username) {
             }
 
             // Yield found projects individually
+            // Capture the cursor used for this batch so we can resume from it if needed
+            const currentBatchCursor = cursor;
+
             for (const p of projects) {
-                if (p) yield p;
+                if (p) {
+                    p._batchCursor = currentBatchCursor;
+                    yield p;
+                }
             }
 
             if (meta && meta.has_next_page && meta.end_cursor) {
