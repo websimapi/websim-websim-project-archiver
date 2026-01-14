@@ -91,11 +91,12 @@ async function processProject(project, username, options) {
         // 1. Resolve Version
         let versionId = project.latest_revision?.id || 
                         project.latest_version?.id || 
-                        project.revision?.id || 
-                        project.current_version;
+                        project.revision?.id;
 
+        // If we don't have a UUID, attempt to resolve one.
+        // We avoid using numeric current_version immediately as APIs usually prefer UUIDs.
         if (!versionId) {
-             console.log(`[Main] No direct version for ${project.id}, trying strategies...`);
+             console.log(`[Main] No direct version UUID for ${project.id}, trying strategies...`);
              // Strategy A: Slug
              if (username && project.slug) {
                 try {
@@ -117,6 +118,11 @@ async function processProject(project, username, options) {
                     versionId = revs[0]?.id;
                  } catch(e) {}
              }
+        }
+
+        // Fallback: Use numeric version if available (better than nothing)
+        if (!versionId && project.current_version) {
+            versionId = project.current_version;
         }
 
         if (!versionId) throw new Error('No version found');
@@ -288,43 +294,6 @@ async function finishBackup(mode) {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(content);
         a.download = `${usernameInput.value.replace('@','')}_full_backup_${Date.now()}.zip`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-
-    } catch (e) {
-        alert("Error generating ZIP: " + e.message);
-    }
-
-    startBtn.textContent = "Start Backup";
-    startBtn.disabled = false;
-}
-
-async function finishBackup() {
-    isRunning = false;
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-    usernameInput.disabled = false;
-
-    if (processedCount === 0) {
-        alert("No projects were processed.");
-        return;
-    }
-
-    const btnText = startBtn.textContent;
-    startBtn.textContent = "Generating ZIP...";
-    startBtn.disabled = true;
-
-    try {
-        const content = await zip.generateAsync({ type: "blob" }, (metadata) => {
-             statSize.textContent = `Zipping: ${metadata.percent.toFixed(1)}%`;
-        });
-        
-        statSize.textContent = formatBytes(content.size);
-        
-        // Trigger Download
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(content);
-        a.download = `${usernameInput.value.replace('@','')}_websim_backup_${Date.now()}.zip`;
         a.click();
         URL.revokeObjectURL(a.href);
 
