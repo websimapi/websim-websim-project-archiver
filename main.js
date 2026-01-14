@@ -12,13 +12,6 @@ let processedCount = 0;
 let zip = null; // Used for Batch mode
 let currentZipSize = 0;
 
-let resumeState = {
-    active: false,
-    username: null,
-    cursor: null,
-    processedIds: new Set()
-};
-
 // --- DOM Elements ---
 const usernameInput = document.getElementById('username');
 const startBtn = document.getElementById('start-btn');
@@ -34,18 +27,6 @@ const dateEndInput = document.getElementById('date-end');
 const downloadModeInput = document.getElementById('download-mode');
 const delayInput = document.getElementById('delay-ms');
 const skipForksInput = document.getElementById('skip-forks');
-
-// Reset resume state when settings change
-[usernameInput, dateStartInput, dateEndInput, downloadModeInput, skipForksInput].forEach(el => {
-    if (el) el.addEventListener('change', () => {
-        resumeState.active = false;
-        resumeState.cursor = null;
-        resumeState.processedIds.clear();
-        if (startBtn.textContent === "Resume Backup") {
-            startBtn.textContent = "Start Backup";
-        }
-    });
-});
 
 // --- Helpers ---
 const formatBytes = (bytes, decimals = 2) => {
@@ -108,43 +89,38 @@ async function processProject(project, username, options) {
     
     try {
         // 1. Resolve Version
-        let versionId = project.latest_revision?.id || 
-                        project.latest_version?.id || 
-                        project.revision?.id;
+        // API endpoints for assets/html require the numeric version (e.g., 42), NOT the UUID.
+        let versionId = project.current_version;
 
-        // If we don't have a UUID, attempt to resolve one.
-        // We avoid using numeric current_version immediately as APIs usually prefer UUIDs.
-        if (!versionId) {
-             console.log(`[Main] No direct version UUID for ${project.id}, trying strategies...`);
-             // Strategy A: Slug
-             if (username && project.slug) {
-                try {
-                    const full = await getProjectBySlug(username, project.slug);
-                    versionId = full?.project_revision?.id || full?.latest_revision?.id;
-                } catch(e) {}
-             }
-             // Strategy B: ID
-             if (!versionId) {
-                try {
-                    const full = await getProjectById(project.id);
-                    versionId = full?.project_revision?.id || full?.latest_revision?.id;
-                } catch(e) {}
-             }
-             // Strategy C: History
-             if (!versionId) {
-                 try {
-                    const revs = await getAllProjectRevisions(project.id);
-                    versionId = revs[0]?.id;
-                 } catch(e) {}
+        if (versionId === undefined || versionId === null) {
+            versionId = project.latest_revision?.version || 
+                        project.latest_version?.version || 
+                        project.revision?.version;
+        }
+
+        // If still missing, fetch fresh metadata to find numeric version
+        if (versionId === undefined || versionId === null) {
+             console.log(`[Main] No numeric version for ${project.id}, fetching metadata...`);
+             try {
+                 const full = await getProjectById(project.id);
+                 versionId = full?.current_version;
+                 
+                 // If still null, check revisions history
+                 if (versionId === undefined || versionId === null) {
+                     const revs = await getAllProjectRevisions(project.id);
+                     versionId = revs[0]?.version;
+                 }
+             } catch(e) {
+                 console.warn("[Main] Failed to resolve version metadata:", e);
              }
         }
 
-        // Fallback: Use numeric version if available (better than nothing)
-        if (!versionId && project.current_version) {
-            versionId = project.current_version;
+        if (versionId === undefined || versionId === null) {
+            console.error("Project dump:", project);
+            throw new Error('No numeric version found (API requires numeric version)');
         }
-
-        if (!versionId) throw new Error('No version found');
+        
+        console.log(`[Main] Using version: ${versionId} (Type: ${typeof versionId})`);
 
         // 2. Setup Zip Target
         // If mode is individual, we create a temporary zip. If batch, we use the passed folder.
@@ -208,32 +184,17 @@ async function startBackup() {
 
     console.log(`[Main] Backup config: User=${username}, Mode=${mode}, Delay=${delay}, SkipForks=${skipForks}`);
 
-    // Determine if we are resuming
-    const isResuming = resumeState.active && resumeState.username === username;
-
-    // Reset UI / State
+    // Reset UI
     isRunning = true;
     stopRequested = false;
-    
-    if (!isResuming) {
-        // Fresh Start
-        resumeState.active = false;
-        resumeState.username = username;
-        resumeState.cursor = null;
-        resumeState.processedIds.clear();
-
-        foundProjects = [];
-        projectListEl.innerHTML = '';
-        statTotal.textContent = '0';
-    } else {
-        console.log(`[Main] Resuming backup from cursor: ${resumeState.cursor}`);
-    }
-    
-    // Always reset session stats (new zip, new run count)
+    foundProjects = [];
     processedCount = 0;
+    zip = new JSZip(); // Always init for potential Batch usage
+    
+    projectListEl.innerHTML = '';
+    statTotal.textContent = '0';
     statProcessed.textContent = '0';
     statSize.textContent = '0 Bytes';
-    zip = new JSZip(); // Always new zip for the session (prevents memory bloat on resume)
     
     startBtn.disabled = true;
     stopBtn.disabled = false;
@@ -242,15 +203,10 @@ async function startBackup() {
 
     try {
         const userFolder = zip.folder(username);
-        const generator = getAllUserProjectsGenerator(username, isResuming ? resumeState.cursor : null);
+        const generator = getAllUserProjectsGenerator(username);
         
         for await (const project of generator) {
             if (stopRequested) break;
-            
-            // Resume Check: If we already processed this ID in a previous partial run, skip it
-            if (resumeState.processedIds.has(project.id)) {
-                continue;
-            }
 
             // --- FILTERING LOGIC ---
             
@@ -284,10 +240,6 @@ async function startBackup() {
                 mode: mode,
                 rootZipFolder: userFolder
             });
-
-            // Mark as processed for resume capability
-            resumeState.processedIds.add(project.id);
-            resumeState.cursor = project._batchCursor; // Update cursor to the one that fetched this project
             
             // Rate Limit
             if (delay > 0) {
@@ -311,26 +263,15 @@ async function finishBackup(mode) {
     stopBtn.textContent = "Stop";
     usernameInput.disabled = false;
 
-    if (stopRequested) {
-        // Paused
-        resumeState.active = true;
-        startBtn.textContent = "Resume Backup";
-        console.log("Backup paused. Resume state saved.");
-    } else {
-        // Completed naturally
-        resumeState.active = false;
-        startBtn.textContent = "Start Backup";
-    }
-
     // In individual mode, we are done.
     if (mode === 'individual') {
-        if (!stopRequested) alert(`Done! Processed ${processedCount} projects.`);
+        alert(`Done! Processed ${processedCount} projects.`);
         return;
     }
 
     // In batch mode, we check if we have anything to zip
     if (processedCount === 0) {
-        if (!stopRequested) alert("No projects were processed.");
+        alert("No projects were processed.");
         return;
     }
 

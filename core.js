@@ -14,8 +14,16 @@ export async function makeRequest(endpoint, options = {}) {
     
     if (!response.ok) {
         const errorText = await response.text();
-        console.error(`[WebSimAPI] Request Failed: ${url} (${response.status})`, errorText);
-        throw new Error(`API Error ${response.status}: ${errorText}`);
+        console.error(`[WebSimAPI] Request Failed: ${url} (${response.status})`);
+        // Try to parse clean error message
+        let cleanMsg = errorText;
+        try {
+            const json = JSON.parse(errorText);
+            if (json.error && json.error.message) cleanMsg = json.error.message;
+            if (json.error && json.error.pathErrors) cleanMsg += ` (${JSON.stringify(json.error.pathErrors)})`;
+        } catch(e) {}
+        console.error(`[WebSimAPI] Details:`, cleanMsg);
+        throw new Error(`API Error ${response.status}: ${cleanMsg}`);
     }
     
     return response.json();
