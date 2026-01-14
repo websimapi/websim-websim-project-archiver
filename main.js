@@ -9,7 +9,7 @@ let isRunning = false;
 let stopRequested = false;
 let foundProjects = [];
 let processedCount = 0;
-let zip = null;
+let zip = null; // Used for Batch mode
 let currentZipSize = 0;
 
 // --- DOM Elements ---
@@ -20,6 +20,13 @@ const projectListEl = document.getElementById('project-list');
 const statTotal = document.getElementById('stat-total');
 const statProcessed = document.getElementById('stat-processed');
 const statSize = document.getElementById('stat-size');
+
+// Settings Elements
+const dateStartInput = document.getElementById('date-start');
+const dateEndInput = document.getElementById('date-end');
+const downloadModeInput = document.getElementById('download-mode');
+const delayInput = document.getElementById('delay-ms');
+const skipForksInput = document.getElementById('skip-forks');
 
 // --- Helpers ---
 const formatBytes = (bytes, decimals = 2) => {
@@ -71,109 +78,90 @@ const updateStatus = (projectId, status, msg) => {
 
 // --- Core Logic ---
 
-async function processProject(project, username, userFolder) {
+async function processProject(project, username, options) {
     if (stopRequested) return;
     
-    // Use the initial ID for UI updates to ensure we target the correct DOM elements
+    const { mode, rootZipFolder } = options;
     const uiId = project.id; 
 
     console.log(`[Main] Processing project: ${project.id} (slug: ${project.slug})`);
-    
     updateStatus(uiId, 'loading', 'Fetching latest revision...');
     
     try {
-        // 1. Get Latest Version ID (Robust strategy)
-        let versionId = project.latest_revision?.id;
-        if (!versionId && project.latest_version) versionId = project.latest_version.id;
-        if (!versionId && project.revision) versionId = project.revision.id;
-        // Fallback: If not uuid, maybe int version?
-        if (!versionId && project.current_version) versionId = project.current_version;
+        // 1. Resolve Version
+        let versionId = project.latest_revision?.id || 
+                        project.latest_version?.id || 
+                        project.revision?.id || 
+                        project.current_version;
 
         if (!versionId) {
-             console.log(`[Main] No latest_revision for ${project.id}, attempting strategies...`);
-             
-             // Strategy A: Fetch by Slug
+             console.log(`[Main] No direct version for ${project.id}, trying strategies...`);
+             // Strategy A: Slug
              if (username && project.slug) {
                 try {
-                    const fullProj = await getProjectBySlug(username, project.slug);
-                    if (fullProj) {
-                        if (fullProj.project_revision && fullProj.project_revision.id) versionId = fullProj.project_revision.id;
-                        else if (fullProj.project && fullProj.project.latest_revision?.id) versionId = fullProj.project.latest_revision.id;
-                        else if (fullProj.latest_revision?.id) versionId = fullProj.latest_revision.id;
-                        
-                        // Fix ID if redirected
-                        const foundProjId = fullProj.project?.id || fullProj.id;
-                        if (foundProjId && foundProjId !== project.id) project.id = foundProjId;
-                    }
-                } catch(e) { console.warn(`[Main] Slug fetch failed: ${e.message}`); }
+                    const full = await getProjectBySlug(username, project.slug);
+                    versionId = full?.project_revision?.id || full?.latest_revision?.id;
+                } catch(e) {}
              }
-
-             // Strategy B: Fetch by ID
-             if (!versionId && project.id) {
+             // Strategy B: ID
+             if (!versionId) {
                 try {
-                    const fullProj = await getProjectById(project.id);
-                    if (fullProj) {
-                         if (fullProj.project_revision && fullProj.project_revision.id) versionId = fullProj.project_revision.id;
-                         else if (fullProj.project && fullProj.project.latest_revision?.id) versionId = fullProj.project.latest_revision.id;
-                         else if (fullProj.latest_revision?.id) versionId = fullProj.latest_revision.id;
-                    }
-                } catch(e) { console.warn(`[Main] ID fetch failed: ${e.message}`); }
+                    const full = await getProjectById(project.id);
+                    versionId = full?.project_revision?.id || full?.latest_revision?.id;
+                } catch(e) {}
              }
-
-             // Strategy C: Revision History Fallback
+             // Strategy C: History
              if (!versionId) {
                  try {
-                    const revisions = await getAllProjectRevisions(project.id);
-                    const validRev = revisions.find(r => r && r.id);
-                    if (validRev) versionId = validRev.id;
-                 } catch (e) { console.error(`[Main] Failed to fetch revisions: ${e.message}`); }
+                    const revs = await getAllProjectRevisions(project.id);
+                    versionId = revs[0]?.id;
+                 } catch(e) {}
              }
         }
 
-        if (!versionId) {
-             throw new Error('No revisions found for project (all strategies failed)');
-        }
+        if (!versionId) throw new Error('No version found');
 
-        console.log(`[Main] Resolved version for ${project.id}: ${versionId}`);
+        // 2. Setup Zip Target
+        // If mode is individual, we create a temporary zip. If batch, we use the passed folder.
+        const targetZip = mode === 'individual' ? new JSZip() : rootZipFolder;
+        // For batch, we make a subfolder. For individual, the root of the zip is the project.
+        const projectFolderName = project.slug || project.id || `project_${project.id}`;
+        const outputFolder = mode === 'individual' ? targetZip : targetZip.folder(projectFolderName);
 
-        // Safety for folder name
-        const folderName = project.slug || project.id || `project_${project.id}`;
-        const projectFolder = userFolder.folder(folderName);
-
-        // 2. Fetch Assets & HTML (New Robust Pipeline)
-        updateStatus(uiId, 'loading', 'Downloading files...');
-        
-        // Fetch asset list and HTML content in parallel
+        // 3. Download Content
+        updateStatus(uiId, 'loading', 'Downloading assets...');
         const [assetList, htmlContent] = await Promise.all([
             getAssets(project.id, versionId),
             getProjectHtml(project.id, versionId)
         ]);
-        
-        console.log(`[Main] Found ${assetList.length} assets.`);
 
-        // 3. Process Assets
-        updateStatus(uiId, 'loading', `Downloading ${assetList.length} assets...`);
         const files = await processAssets(assetList, project.id, versionId);
 
-        // 4. Inject HTML
-        if (htmlContent) {
-            files['index.html'] = new TextEncoder().encode(htmlContent);
-        } else if (!files['index.html']) {
-            files['index.html'] = new TextEncoder().encode(`<html><body><h1>${project.title || 'Untitled'}</h1><p>Source unavailable.</p></body></html>`);
+        // 4. Add HTML
+        const htmlBuffer = htmlContent 
+            ? new TextEncoder().encode(htmlContent)
+            : new TextEncoder().encode(`<html><body><h1>${project.title}</h1><p>Source unavailable.</p></body></html>`);
+        files['index.html'] = htmlBuffer;
+
+        // 5. Write to target folder
+        for (const [path, content] of Object.entries(files)) {
+            outputFolder.file(path.replace(/^\/+/, ''), content);
         }
 
-        // 5. Write to Zip Folder
-        const fileCount = Object.keys(files).length;
-        for (const [path, content] of Object.entries(files)) {
-            // Clean path logic is already in processAssets, but double check
-            const cleanPath = path.replace(/^\/+/, '');
-            projectFolder.file(cleanPath, content);
+        // 6. Handle Individual Download
+        if (mode === 'individual') {
+            updateStatus(uiId, 'loading', 'Zipping...');
+            const blob = await targetZip.generateAsync({ type: "blob" });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `${username}_${projectFolderName}.zip`;
+            a.click();
+            URL.revokeObjectURL(a.href);
         }
 
         processedCount++;
         statProcessed.textContent = processedCount;
-        updateStatus(uiId, 'done', 'Packaged');
-        console.log(`[Main] Finished processing ${project.id} (${fileCount} files)`);
+        updateStatus(uiId, 'done', mode === 'individual' ? 'Saved' : 'Packaged');
 
     } catch (e) {
         console.error(`[Main] Error processing ${project.slug}:`, e);
@@ -185,15 +173,22 @@ async function startBackup() {
     const username = usernameInput.value.trim().replace('@', '');
     if (!username) return alert('Please enter a username');
 
-    console.log(`[Main] Starting backup for user: ${username}`);
+    // Read Settings
+    const mode = downloadModeInput.value;
+    const delay = parseInt(delayInput.value) || 3000;
+    const skipForks = skipForksInput.checked;
+    
+    const startDate = dateStartInput.value ? new Date(dateStartInput.value) : null;
+    const endDate = dateEndInput.value ? new Date(dateEndInput.value) : null;
+
+    console.log(`[Main] Backup config: User=${username}, Mode=${mode}, Delay=${delay}, SkipForks=${skipForks}`);
 
     // Reset UI
     isRunning = true;
     stopRequested = false;
     foundProjects = [];
     processedCount = 0;
-    zip = new JSZip();
-    currentZipSize = 0;
+    zip = new JSZip(); // Always init for potential Batch usage
     
     projectListEl.innerHTML = '';
     statTotal.textContent = '0';
@@ -202,24 +197,32 @@ async function startBackup() {
     
     startBtn.disabled = true;
     stopBtn.disabled = false;
+    stopBtn.textContent = (mode === 'batch') ? "Stop & Save" : "Stop";
     usernameInput.disabled = true;
 
     try {
         const userFolder = zip.folder(username);
-        
-        // 1. Fetch Loop (Generator)
-        console.log(`[Main] Initializing project generator...`);
         const generator = getAllUserProjectsGenerator(username);
         
         for await (const project of generator) {
-            if (stopRequested) {
-                console.log(`[Main] Stop requested during loop. Breaking...`);
-                break;
+            if (stopRequested) break;
+
+            // --- FILTERING LOGIC ---
+            
+            // 1. Date Filter
+            if (startDate || endDate) {
+                const pDate = new Date(project.created_at); // or updated_at? Usually creation for archive.
+                if (startDate && pDate < startDate) continue;
+                if (endDate && pDate > endDate) continue;
+            }
+
+            // 2. Fork Filter
+            if (skipForks && project.parent_id) {
+                console.log(`[Main] Skipping fork: ${project.slug} (Parent: ${project.parent_id})`);
+                continue;
             }
 
             console.log(`[Main] Discovered project: ${project.id}`);
-
-            // Add to list
             foundProjects.push(project);
             statTotal.textContent = foundProjects.length;
             
@@ -227,26 +230,73 @@ async function startBackup() {
             projectListEl.appendChild(el);
 
             if (!project.id) {
-                console.error('[Main] Skipping project with missing ID:', project);
                 updateStatus('unknown', 'error', 'Missing ID');
                 continue;
             }
 
-            // Process immediately (Sequential for safety/simplicity)
-            await processProject(project, username, userFolder);
+            // Process
+            await processProject(project, username, {
+                mode: mode,
+                rootZipFolder: userFolder
+            });
             
-            // Wait 3 seconds to avoid rate limits
-            console.log('[Main] Waiting 3 seconds before next project...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            // Rate Limit
+            if (delay > 0) {
+                console.log(`[Main] Waiting ${delay}ms...`);
+                await new Promise(r => setTimeout(r, delay));
+            }
         }
 
     } catch (e) {
         console.error("[Main] Loop error:", e);
-        alert(`Error fetching project list: ${e.message}`);
+        alert(`Error: ${e.message}`);
     } finally {
-        console.log(`[Main] Loop finished. Calling finishBackup...`);
-        finishBackup();
+        finishBackup(mode);
     }
+}
+
+async function finishBackup(mode) {
+    isRunning = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    stopBtn.textContent = "Stop";
+    usernameInput.disabled = false;
+
+    // In individual mode, we are done.
+    if (mode === 'individual') {
+        alert(`Done! Processed ${processedCount} projects.`);
+        return;
+    }
+
+    // In batch mode, we check if we have anything to zip
+    if (processedCount === 0) {
+        alert("No projects were processed.");
+        return;
+    }
+
+    // Generate Giant Zip
+    startBtn.textContent = "Saving ZIP...";
+    startBtn.disabled = true;
+
+    try {
+        const content = await zip.generateAsync({ type: "blob" }, (metadata) => {
+             statSize.textContent = `Zipping: ${metadata.percent.toFixed(1)}%`;
+        });
+        
+        statSize.textContent = formatBytes(content.size);
+        
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(content);
+        a.download = `${usernameInput.value.replace('@','')}_full_backup_${Date.now()}.zip`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+
+    } catch (e) {
+        alert("Error generating ZIP: " + e.message);
+    }
+
+    startBtn.textContent = "Start Backup";
+    startBtn.disabled = false;
 }
 
 async function finishBackup() {

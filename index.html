@@ -23,11 +23,39 @@
         <div class="controls">
             <input type="text" id="username" placeholder="Enter username (e.g. @user)" autocomplete="off">
             <button id="start-btn">Start Backup</button>
-            <button id="stop-btn" class="stop" disabled>Stop & Save</button>
+            <button id="stop-btn" class="stop" disabled>Stop</button>
         </div>
     </header>
 
     <div class="main-content">
+        <div class="settings-panel">
+            <div class="settings-grid">
+                <div class="setting-group">
+                    <label for="date-start">Start Date</label>
+                    <input type="datetime-local" id="date-start">
+                </div>
+                <div class="setting-group">
+                    <label for="date-end">End Date</label>
+                    <input type="datetime-local" id="date-end">
+                </div>
+                <div class="setting-group">
+                    <label for="download-mode">Download Mode</label>
+                    <select id="download-mode">
+                        <option value="batch">One Big ZIP (Batch)</option>
+                        <option value="individual">Individual ZIPs (Stream)</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label for="delay-ms">Delay (ms)</label>
+                    <input type="number" id="delay-ms" value="3000" min="500" step="500">
+                </div>
+                <div class="setting-group checkbox-group">
+                    <input type="checkbox" id="skip-forks">
+                    <label for="skip-forks" style="cursor:pointer">Skip Forks</label>
+                </div>
+            </div>
+        </div>
+
         <div class="stats-bar">
             <div class="stat-card">
                 <span class="stat-val" id="stat-total">0</span>
